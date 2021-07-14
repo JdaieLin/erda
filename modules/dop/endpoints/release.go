@@ -59,11 +59,15 @@ func (e *Endpoints) ReleaseCallback(ctx context.Context, r *http.Request, vars m
 		logrus.Errorf("failed to get branch rules, req: %+v, (%+v)", req, err)
 		return apierrors.ErrReleaseCallback.InternalError(err).ToResp(), nil
 	}
+	isTag := req.Content.IsTag
 	refName := ""
-	if req.Content.IsTag {
+	branchName := ""
+	if isTag {
 		refName = strings.TrimPrefix(req.Content.Ref, "refs/tags/")
+		// git branch --contains <tag> 获取当前分支
 	} else {
 		refName = strings.TrimPrefix(req.Content.Ref, "refs/heads/")
+		branchName = refName
 	}
 
 	// 从 gittar 获取 pipeline.yml
@@ -81,7 +85,11 @@ func (e *Endpoints) ReleaseCallback(ctx context.Context, r *http.Request, vars m
 
 	// 应用级设置
 	if pipelineYml.Spec().On != nil && pipelineYml.Spec().On.Push != nil {
-		if !diceworkspace.IsRefPatternMatch(refName, pipelineYml.Spec().On.Push.Branches) {
+		// 满足 branches规则 或者 tags规则 都可以通过
+		if (!isTag && !diceworkspace.IsRefPatternMatch(refName, pipelineYml.Spec().On.Push.Branches)) {
+			return httpserver.OkResp("")
+		}
+		if (isTag && !diceworkspace.IsRefPatternMatch(refName, pipelineYml.Spec().On.Push.Tags)) {
 			return httpserver.OkResp("")
 		}
 	} else {
@@ -93,6 +101,7 @@ func (e *Endpoints) ReleaseCallback(ctx context.Context, r *http.Request, vars m
 	}
 
 	// 创建pipeline流程
+	// TODO 需要通过 tag 拿到分支名
 	reqPipeline := &apistructs.PipelineCreateRequest{
 		AppID:              uint64(req.Content.Repository.ApplicationID),
 		Branch:             refName,
